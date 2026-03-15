@@ -41,6 +41,26 @@ export function CompareMonths({
   onMonthBChange,
 }: CompareMonthsProps) {
   const diffColor = diffAbs > 0 ? "text-red-600" : diffAbs < 0 ? "text-emerald-600" : "text-slate-700";
+  const handleYearAChange = (year: number | "all") => {
+    if (typeof year === "number") {
+      onYearAChange(year);
+    }
+  };
+  const handleMonthAChange = (month: number | "all") => {
+    if (typeof month === "number") {
+      onMonthAChange(month);
+    }
+  };
+  const handleYearBChange = (year: number | "all") => {
+    if (typeof year === "number") {
+      onYearBChange(year);
+    }
+  };
+  const handleMonthBChange = (month: number | "all") => {
+    if (typeof month === "number") {
+      onMonthBChange(month);
+    }
+  };
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -55,8 +75,8 @@ export function CompareMonths({
             year={yearA}
             month={monthA}
             years={years}
-            onYearChange={onYearAChange}
-            onMonthChange={onMonthAChange}
+            onYearChange={handleYearAChange}
+            onMonthChange={handleMonthAChange}
           />
           <p className="mt-3 text-xl font-bold text-slate-900">{formatCurrencyBRL(valueA)}</p>
         </div>
@@ -67,8 +87,8 @@ export function CompareMonths({
             year={yearB}
             month={monthB}
             years={years}
-            onYearChange={onYearBChange}
-            onMonthChange={onMonthBChange}
+            onYearChange={handleYearBChange}
+            onMonthChange={handleMonthBChange}
           />
           <p className="mt-3 text-xl font-bold text-slate-900">{formatCurrencyBRL(valueB)}</p>
         </div>

@@ -43,6 +43,8 @@ type PeriodOption = {
   month: number;
 };
 
+type FilterPeriodValue = number | "all";
+
 export default function Home() {
   const { loading, error, rows, updated_at } = useGlosaData();
 
@@ -51,8 +53,8 @@ export default function Home() {
   const currentMonth = today.getMonth() + 1;
   const previousMonthDate = new Date(currentYear, currentMonth - 2, 1);
 
-  const [riskYear, setRiskYear] = useState(currentYear);
-  const [riskMonth, setRiskMonth] = useState(currentMonth);
+  const [riskYear, setRiskYear] = useState<FilterPeriodValue>(currentYear);
+  const [riskMonth, setRiskMonth] = useState<FilterPeriodValue>(currentMonth);
 
   const [compareYearA, setCompareYearA] = useState(previousMonthDate.getFullYear());
   const [compareMonthA, setCompareMonthA] = useState(previousMonthDate.getMonth() + 1);
@@ -63,8 +65,8 @@ export default function Home() {
   const [kpiMonthYear, setKpiMonthYear] = useState(currentYear);
   const [kpiMonthMonth, setKpiMonthMonth] = useState(currentMonth);
 
-  const [rankingYear, setRankingYear] = useState(currentYear);
-  const [rankingMonth, setRankingMonth] = useState(currentMonth);
+  const [rankingYear, setRankingYear] = useState<FilterPeriodValue>(currentYear);
+  const [rankingMonth, setRankingMonth] = useState<FilterPeriodValue>(currentMonth);
 
   const periodOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -137,11 +139,22 @@ export default function Home() {
     return defaultPeriod;
   };
 
-  const resolvedRiskPeriod = resolvePeriod(riskYear, riskMonth);
+  const resolvedRiskPeriod = resolvePeriod(
+    typeof riskYear === "number" ? riskYear : defaultPeriod.year,
+    typeof riskMonth === "number" ? riskMonth : defaultPeriod.month,
+  );
   const resolvedKpiYear =
     dataYears.length === 0 ? currentYear : (dataYears.includes(kpiYear) ? kpiYear : defaultYear);
   const resolvedKpiMonthPeriod = resolvePeriod(kpiMonthYear, kpiMonthMonth);
-  const resolvedRankingPeriod = resolvePeriod(rankingYear, rankingMonth);
+  const resolvedRankingPeriod = resolvePeriod(
+    typeof rankingYear === "number" ? rankingYear : defaultPeriod.year,
+    typeof rankingMonth === "number" ? rankingMonth : defaultPeriod.month,
+  );
+
+  const riskYearSelection = riskYear === "all" ? "all" : resolvedRiskPeriod.year;
+  const riskMonthSelection = riskMonth === "all" ? "all" : resolvedRiskPeriod.month;
+  const rankingYearSelection = rankingYear === "all" ? "all" : resolvedRankingPeriod.year;
+  const rankingMonthSelection = rankingMonth === "all" ? "all" : resolvedRankingPeriod.month;
 
   const riskMonthOptions = monthsByYear[resolvedRiskPeriod.year] ?? [];
   const kpiMonthOptions = monthsByYear[resolvedKpiMonthPeriod.year] ?? [];
@@ -152,12 +165,12 @@ export default function Home() {
       new Set([
         ...dataYears,
         currentYear,
-        riskYear,
         compareYearA,
         compareYearB,
         kpiYear,
         kpiMonthYear,
-        rankingYear,
+        ...(typeof riskYear === "number" ? [riskYear] : []),
+        ...(typeof rankingYear === "number" ? [rankingYear] : []),
       ]),
     ).sort((a, b) => b - a);
   }, [
@@ -199,8 +212,14 @@ export default function Home() {
   );
 
   const riskData = useMemo(() => {
-    const key = toYearMonthKey(resolvedRiskPeriod.year, resolvedRiskPeriod.month);
-    const filtered = rows.filter((row) => row.ano_mes === key);
+    const filtered = rows.filter((row) => {
+      const period = extractYearMonth(row.ano_mes);
+      if (!period) return false;
+      if (riskYearSelection === "all") return true;
+      if (period.year !== riskYearSelection) return false;
+      if (riskMonthSelection === "all") return true;
+      return period.month === riskMonthSelection;
+    });
     const byResource = groupBy(filtered, (row) => row.recurso);
 
     return Object.entries(byResource)
@@ -226,7 +245,7 @@ export default function Home() {
         };
       })
       .sort((a, b) => b.score - a.score);
-  }, [resolvedRiskPeriod, rows]);
+  }, [riskMonthSelection, riskYearSelection, rows]);
 
   const lineData = useMemo(() => {
     const byMonth = groupBy(rows, (row) => row.ano_mes);
@@ -254,11 +273,14 @@ export default function Home() {
   const diffPct = valueA === 0 ? null : (diffAbs / valueA) * 100;
 
   const motivoRankingData = useMemo(() => {
-    const filtered = rows.filter(
-      (row) =>
-        row.ano_mes ===
-        toYearMonthKey(resolvedRankingPeriod.year, resolvedRankingPeriod.month),
-    );
+    const filtered = rows.filter((row) => {
+      const period = extractYearMonth(row.ano_mes);
+      if (!period) return false;
+      if (rankingYearSelection === "all") return true;
+      if (period.year !== rankingYearSelection) return false;
+      if (rankingMonthSelection === "all") return true;
+      return period.month === rankingMonthSelection;
+    });
 
     const byMotivo = groupBy(filtered, (row) => row.motivo);
 
@@ -268,7 +290,7 @@ export default function Home() {
     }));
 
     return topN(aggregated, 7, (item) => item.valor);
-  }, [resolvedRankingPeriod, rows]);
+  }, [rankingMonthSelection, rankingYearSelection, rows]);
 
   const mosaicData = useMemo(() => {
     const byResource = groupBy(rows, (row) => row.recurso);
@@ -311,11 +333,20 @@ export default function Home() {
     ? rankingMonthOptions
     : [resolvedRankingPeriod.month];
 
-  const handleRiskYearChange = (year: number) => {
+  const handleRiskYearChange = (year: FilterPeriodValue) => {
+    if (year === "all") {
+      setRiskYear("all");
+      setRiskMonth("all");
+      return;
+    }
+
     const months = monthsByYear[year] ?? [];
-    const nextMonth = months.includes(resolvedRiskPeriod.month)
-      ? resolvedRiskPeriod.month
-      : (months[months.length - 1] ?? currentMonth);
+    const nextMonth =
+      riskMonth === "all"
+        ? "all"
+        : months.includes(resolvedRiskPeriod.month)
+          ? resolvedRiskPeriod.month
+          : (months[months.length - 1] ?? currentMonth);
 
     setRiskYear(year);
     setRiskMonth(nextMonth);
@@ -331,18 +362,29 @@ export default function Home() {
     setKpiMonthMonth(nextMonth);
   };
 
-  const handleRankingYearChange = (year: number) => {
+  const handleRankingYearChange = (year: FilterPeriodValue) => {
+    if (year === "all") {
+      setRankingYear("all");
+      setRankingMonth("all");
+      return;
+    }
+
     const months = monthsByYear[year] ?? [];
-    const nextMonth = months.includes(resolvedRankingPeriod.month)
-      ? resolvedRankingPeriod.month
-      : (months[months.length - 1] ?? currentMonth);
+    const nextMonth =
+      rankingMonth === "all"
+        ? "all"
+        : months.includes(resolvedRankingPeriod.month)
+          ? resolvedRankingPeriod.month
+          : (months[months.length - 1] ?? currentMonth);
 
     setRankingYear(year);
     setRankingMonth(nextMonth);
   };
 
-  const handleRiskMonthChange = (month: number) => {
-    setRiskYear(resolvedRiskPeriod.year);
+  const handleRiskMonthChange = (month: FilterPeriodValue) => {
+    if (riskYear === "all" && month !== "all") {
+      setRiskYear(defaultPeriod.year);
+    }
     setRiskMonth(month);
   };
 
@@ -351,8 +393,10 @@ export default function Home() {
     setKpiMonthMonth(month);
   };
 
-  const handleRankingMonthChange = (month: number) => {
-    setRankingYear(resolvedRankingPeriod.year);
+  const handleRankingMonthChange = (month: FilterPeriodValue) => {
+    if (rankingYear === "all" && month !== "all") {
+      setRankingYear(defaultPeriod.year);
+    }
     setRankingMonth(month);
   };
 
@@ -459,10 +503,11 @@ export default function Home() {
               </div>
 
               <FilterMonthYear
-                year={resolvedRiskPeriod.year}
-                month={resolvedRiskPeriod.month}
+                year={riskYearSelection}
+                month={riskMonthSelection}
                 years={riskYearOptions}
                 months={safeRiskMonthOptions}
+                allowAll
                 onYearChange={handleRiskYearChange}
                 onMonthChange={handleRiskMonthChange}
               />
@@ -514,10 +559,11 @@ export default function Home() {
               </div>
 
               <FilterMonthYear
-                year={resolvedRankingPeriod.year}
-                month={resolvedRankingPeriod.month}
+                year={rankingYearSelection}
+                month={rankingMonthSelection}
                 years={rankingYearOptions}
                 months={safeRankingMonthOptions}
+                allowAll
                 onYearChange={handleRankingYearChange}
                 onMonthChange={handleRankingMonthChange}
               />
