@@ -6,12 +6,12 @@ import { FilterMonthYear } from "@/components/FilterMonthYear";
 import { GlosaLineChart } from "@/components/GlosaLineChart";
 import { KpiCard } from "@/components/KpiCard";
 import { MotivoRanking } from "@/components/MotivoRanking";
-import { ResourceRiskMosaic } from "@/components/ResourceRiskMosaic";
 import { RiskBarChart } from "@/components/RiskBarChart";
+import { RiskGauge, type RiskGaugeLevel } from "@/components/RiskGauge";
 import { useGlosaData } from "@/hooks/useGlosaData";
 import { groupBy, normalizeRiskBand, sum, topN } from "@/lib/aggregate";
 import { formatCurrencyBRL, formatMonthLabel } from "@/lib/format";
-import type { RiskBand } from "@/types/glosa";
+import type { GlosaRow, RiskBand } from "@/types/glosa";
 
 function toYearMonthKey(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, "0")}`;
@@ -37,6 +37,72 @@ function extractYearMonth(
   return { year, month };
 }
 
+function classifyRiskLevel(score: number): RiskGaugeLevel {
+  if (score >= 70) return "Alto";
+  if (score >= 40) return "Medio";
+  return "Baixo";
+}
+
+function buildRiskSummary(rows: GlosaRow[]): string {
+  if (!rows.length) {
+    return "Sem dados suficientes para apontar foco de risco no periodo selecionado.";
+  }
+
+  const highestScore = rows.reduce((max, row) => Math.max(max, row.score_risco_glosa), 0);
+  const focusRows = rows.filter((row) => row.score_risco_glosa === highestScore);
+  const prioritizedRows = focusRows.length ? focusRows : rows;
+
+  const topResource = Object.entries(
+    groupBy(
+      prioritizedRows.filter((row) => row.recurso.trim().length > 0),
+      (row) => row.recurso,
+    ),
+  )
+    .map(([recurso, resourceRows]) => ({
+      label: recurso,
+      total: sum(resourceRows, (row) => row.valor_glosado),
+    }))
+    .sort((a, b) => b.total - a.total)[0];
+
+  if (topResource) {
+    return `Maior concentracao de risco no recurso ${topResource.label}.`;
+  }
+
+  const topReason = Object.entries(
+    groupBy(
+      prioritizedRows.filter((row) => row.motivo.trim().length > 0),
+      (row) => row.motivo,
+    ),
+  )
+    .map(([motivo, motivoRows]) => ({
+      label: motivo,
+      total: sum(motivoRows, (row) => row.valor_glosado),
+    }))
+    .sort((a, b) => b.total - a.total)[0];
+
+  if (topReason) {
+    return `Maior concentracao de risco no motivo ${topReason.label}.`;
+  }
+
+  const topArea = Object.entries(
+    groupBy(
+      prioritizedRows.filter((row) => row.area.trim().length > 0),
+      (row) => row.area,
+    ),
+  )
+    .map(([area, areaRows]) => ({
+      label: area,
+      total: sum(areaRows, (row) => row.valor_glosado),
+    }))
+    .sort((a, b) => b.total - a.total)[0];
+
+  if (topArea) {
+    return `Maior concentracao de risco na area ${topArea.label}.`;
+  }
+
+  return "Sem agrupamento suficiente para resumir a concentracao de risco.";
+}
+
 type PeriodOption = {
   key: string;
   year: number;
@@ -44,6 +110,21 @@ type PeriodOption = {
 };
 
 type FilterPeriodValue = number | "all";
+
+function filterRowsByPeriod(
+  rows: GlosaRow[],
+  year: FilterPeriodValue,
+  month: FilterPeriodValue,
+): GlosaRow[] {
+  return rows.filter((row) => {
+    const period = extractYearMonth(row.ano_mes);
+    if (!period) return false;
+    if (year === "all" && month === "all") return true;
+    if (year !== "all" && period.year !== year) return false;
+    if (month === "all") return true;
+    return period.month === month;
+  });
+}
 
 export default function Home() {
   const { loading, error, rows, updated_at } = useGlosaData();
@@ -53,8 +134,12 @@ export default function Home() {
   const currentMonth = today.getMonth() + 1;
   const previousMonthDate = new Date(currentYear, currentMonth - 2, 1);
 
-  const [riskYear, setRiskYear] = useState<FilterPeriodValue>(currentYear);
-  const [riskMonth, setRiskMonth] = useState<FilterPeriodValue>(currentMonth);
+  const [thermometerYear, setThermometerYear] = useState<FilterPeriodValue>(currentYear);
+  const [thermometerMonth, setThermometerMonth] = useState<FilterPeriodValue>(currentMonth);
+  const [riskChartYear, setRiskChartYear] = useState<FilterPeriodValue>(currentYear);
+  const [riskChartMonth, setRiskChartMonth] = useState<FilterPeriodValue>(currentMonth);
+  const [globalYear, setGlobalYear] = useState<number | "Todos">("Todos");
+  const [globalMonth, setGlobalMonth] = useState<number | "Todos">("Todos");
 
   const [compareYearA, setCompareYearA] = useState(previousMonthDate.getFullYear());
   const [compareMonthA, setCompareMonthA] = useState(previousMonthDate.getMonth() + 1);
@@ -140,8 +225,12 @@ export default function Home() {
   };
 
   const resolvedRiskPeriod = resolvePeriod(
-    typeof riskYear === "number" ? riskYear : defaultPeriod.year,
-    typeof riskMonth === "number" ? riskMonth : defaultPeriod.month,
+    typeof thermometerYear === "number" ? thermometerYear : defaultPeriod.year,
+    typeof thermometerMonth === "number" ? thermometerMonth : defaultPeriod.month,
+  );
+  const resolvedRiskChartPeriod = resolvePeriod(
+    typeof riskChartYear === "number" ? riskChartYear : defaultPeriod.year,
+    typeof riskChartMonth === "number" ? riskChartMonth : defaultPeriod.month,
   );
   const resolvedKpiYear =
     dataYears.length === 0 ? currentYear : (dataYears.includes(kpiYear) ? kpiYear : defaultYear);
@@ -151,12 +240,48 @@ export default function Home() {
     typeof rankingMonth === "number" ? rankingMonth : defaultPeriod.month,
   );
 
-  const riskYearSelection = riskYear === "all" ? "all" : resolvedRiskPeriod.year;
-  const riskMonthSelection = riskMonth === "all" ? "all" : resolvedRiskPeriod.month;
+  const globalMonthOptions = useMemo(() => {
+    if (typeof globalYear === "number") {
+      return monthsByYear[globalYear] ?? [];
+    }
+
+    return Array.from(new Set(periodOptions.map((item) => item.month))).sort((a, b) => a - b);
+  }, [globalYear, monthsByYear, periodOptions]);
+
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => {
+      const period = extractYearMonth(row.ano_mes);
+      if (!period) return false;
+
+      if (globalYear === "Todos" && globalMonth === "Todos") {
+        return true;
+      }
+
+      if (typeof globalYear === "number" && globalMonth === "Todos") {
+        return period.year === globalYear;
+      }
+
+      if (typeof globalYear === "number" && typeof globalMonth === "number") {
+        return period.year === globalYear && period.month === globalMonth;
+      }
+
+      return typeof globalMonth === "number" ? period.month === globalMonth : true;
+    });
+  }, [globalMonth, globalYear, rows]);
+
+  const thermometerYearSelection =
+    thermometerYear === "all" ? "all" : resolvedRiskPeriod.year;
+  const thermometerMonthSelection =
+    thermometerMonth === "all" ? "all" : resolvedRiskPeriod.month;
+  const riskChartYearSelection =
+    riskChartYear === "all" ? "all" : resolvedRiskChartPeriod.year;
+  const riskChartMonthSelection =
+    riskChartMonth === "all" ? "all" : resolvedRiskChartPeriod.month;
   const rankingYearSelection = rankingYear === "all" ? "all" : resolvedRankingPeriod.year;
   const rankingMonthSelection = rankingMonth === "all" ? "all" : resolvedRankingPeriod.month;
 
-  const riskMonthOptions = monthsByYear[resolvedRiskPeriod.year] ?? [];
+  const riskChartMonthOptions =
+    typeof riskChartYearSelection === "number" ? monthsByYear[riskChartYearSelection] ?? [] : [];
   const kpiMonthOptions = monthsByYear[resolvedKpiMonthPeriod.year] ?? [];
   const rankingMonthOptions = monthsByYear[resolvedRankingPeriod.year] ?? [];
 
@@ -169,7 +294,8 @@ export default function Home() {
         compareYearB,
         kpiYear,
         kpiMonthYear,
-        ...(typeof riskYear === "number" ? [riskYear] : []),
+        ...(typeof riskChartYear === "number" ? [riskChartYear] : []),
+        ...(typeof thermometerYear === "number" ? [thermometerYear] : []),
         ...(typeof rankingYear === "number" ? [rankingYear] : []),
       ]),
     ).sort((a, b) => b - a);
@@ -180,47 +306,70 @@ export default function Home() {
     dataYears,
     kpiMonthYear,
     kpiYear,
+    riskChartYear,
     rankingYear,
-    riskYear,
+    thermometerYear,
   ]);
 
   const totalAllTime = useMemo(
-    () => sum(rows, (row) => row.valor_glosado),
-    [rows],
+    () => sum(filteredRows, (row) => row.valor_glosado),
+    [filteredRows],
   );
 
   const totalSelectedYear = useMemo(
     () =>
       sum(
-        rows.filter((row) => extractYearMonth(row.ano_mes)?.year === resolvedKpiYear),
+        filteredRows.filter((row) => extractYearMonth(row.ano_mes)?.year === resolvedKpiYear),
         (row) => row.valor_glosado,
       ),
-    [resolvedKpiYear, rows],
+    [filteredRows, resolvedKpiYear],
   );
 
   const totalSelectedMonth = useMemo(
     () =>
       sum(
-        rows.filter(
+        filteredRows.filter(
           (row) =>
             row.ano_mes ===
             toYearMonthKey(resolvedKpiMonthPeriod.year, resolvedKpiMonthPeriod.month),
         ),
         (row) => row.valor_glosado,
       ),
-    [resolvedKpiMonthPeriod, rows],
+    [filteredRows, resolvedKpiMonthPeriod],
   );
 
+  const thermometerRows = useMemo(
+    () => filterRowsByPeriod(rows, thermometerYearSelection, thermometerMonthSelection),
+    [rows, thermometerMonthSelection, thermometerYearSelection],
+  );
+
+  const generalRisk = useMemo(() => {
+    const score =
+      thermometerRows.length > 0
+        ? sum(thermometerRows, (row) => row.score_risco_glosa) / thermometerRows.length
+        : 0;
+    const level = classifyRiskLevel(score);
+    const summary = buildRiskSummary(thermometerRows);
+    const supportText =
+      level === "Alto"
+        ? "Requer atencao imediata"
+        : level === "Medio"
+          ? "Monitoramento recomendado"
+          : "Situacao sob controle";
+
+    return {
+      score,
+      level,
+      summary,
+      supportText,
+    };
+  }, [thermometerRows]);
+
   const riskData = useMemo(() => {
-    const filtered = rows.filter((row) => {
-      const period = extractYearMonth(row.ano_mes);
-      if (!period) return false;
-      if (riskYearSelection === "all") return true;
-      if (period.year !== riskYearSelection) return false;
-      if (riskMonthSelection === "all") return true;
-      return period.month === riskMonthSelection;
-    });
-    const byResource = groupBy(filtered, (row) => row.recurso);
+    const byResource = groupBy(
+      filterRowsByPeriod(filteredRows, riskChartYearSelection, riskChartMonthSelection),
+      (row) => row.recurso,
+    );
 
     return Object.entries(byResource)
       .map(([recurso, resourceRows]) => {
@@ -245,10 +394,10 @@ export default function Home() {
         };
       })
       .sort((a, b) => b.score - a.score);
-  }, [riskMonthSelection, riskYearSelection, rows]);
+  }, [filteredRows, riskChartMonthSelection, riskChartYearSelection]);
 
   const lineData = useMemo(() => {
-    const byMonth = groupBy(rows, (row) => row.ano_mes);
+    const byMonth = groupBy(filteredRows, (row) => row.ano_mes);
 
     return Object.entries(byMonth)
       .map(([anoMes, monthRows]) => ({
@@ -256,7 +405,7 @@ export default function Home() {
         valor: sum(monthRows, (row) => row.valor_glosado),
       }))
       .sort((a, b) => a.anoMes.localeCompare(b.anoMes));
-  }, [rows]);
+  }, [filteredRows]);
 
   const monthValueMap = useMemo(() => {
     return lineData.reduce<Record<string, number>>((acc, item) => {
@@ -273,7 +422,7 @@ export default function Home() {
   const diffPct = valueA === 0 ? null : (diffAbs / valueA) * 100;
 
   const motivoRankingData = useMemo(() => {
-    const filtered = rows.filter((row) => {
+    const filtered = filteredRows.filter((row) => {
       const period = extractYearMonth(row.ano_mes);
       if (!period) return false;
       if (rankingYearSelection === "all") return true;
@@ -290,41 +439,23 @@ export default function Home() {
     }));
 
     return topN(aggregated, 7, (item) => item.valor);
-  }, [rankingMonthSelection, rankingYearSelection, rows]);
-
-  const mosaicData = useMemo(() => {
-    const byResource = groupBy(rows, (row) => row.recurso);
-
-    return Object.entries(byResource)
-      .map(([recurso, resourceRows]) => {
-        const valor = sum(resourceRows, (row) => row.valor_glosado);
-
-        const dominantRisk = resourceRows.reduce<RiskBand>((risk, row) => {
-          const current = normalizeRiskBand(row.faixa_risco);
-          return riskSeverity(current) > riskSeverity(risk) ? current : risk;
-        }, "Baixo");
-
-        const total = resourceRows.length;
-        const alto = resourceRows.filter((row) => row.flag_alto_risco === 1).length;
-        const percentualAltoRisco = total > 0 ? Math.round((alto / total) * 100) : 0;
-
-        return {
-          recurso,
-          valor,
-          risco: dominantRisk,
-          percentualAltoRisco,
-        };
-      })
-      .sort((a, b) => b.valor - a.valor);
-  }, [rows]);
+  }, [filteredRows, rankingMonthSelection, rankingYearSelection]);
 
   const dataYearOptions = dataYears.length ? dataYears : [currentYear];
   const kpiMonthYearOptions = dataYears.length ? dataYears : [currentYear];
   const rankingYearOptions = dataYears.length ? dataYears : [currentYear];
-  const riskYearOptions = dataYears.length ? dataYears : [currentYear];
+  const riskChartYearOptions = dataYears.length ? dataYears : [currentYear];
+  const thermometerYearOptions = dataYears.length ? dataYears : [currentYear];
 
-  const safeRiskMonthOptions = riskMonthOptions.length
-    ? riskMonthOptions
+  const safeRiskChartMonthOptions = riskChartMonthOptions.length
+    ? riskChartMonthOptions
+    : [resolvedRiskChartPeriod.month];
+  const thermometerMonthOptions =
+    typeof thermometerYearSelection === "number"
+      ? monthsByYear[thermometerYearSelection] ?? []
+      : Array.from(new Set(periodOptions.map((item) => item.month))).sort((a, b) => a - b);
+  const safeThermometerMonthOptions = thermometerMonthOptions.length
+    ? thermometerMonthOptions
     : [resolvedRiskPeriod.month];
   const safeKpiMonthOptions = kpiMonthOptions.length
     ? kpiMonthOptions
@@ -333,23 +464,42 @@ export default function Home() {
     ? rankingMonthOptions
     : [resolvedRankingPeriod.month];
 
-  const handleRiskYearChange = (year: FilterPeriodValue) => {
+  const handleThermometerYearChange = (year: FilterPeriodValue) => {
     if (year === "all") {
-      setRiskYear("all");
-      setRiskMonth("all");
+      setThermometerYear("all");
+      setThermometerMonth("all");
       return;
     }
 
     const months = monthsByYear[year] ?? [];
     const nextMonth =
-      riskMonth === "all"
+      thermometerMonth === "all"
         ? "all"
         : months.includes(resolvedRiskPeriod.month)
           ? resolvedRiskPeriod.month
           : (months[months.length - 1] ?? currentMonth);
 
-    setRiskYear(year);
-    setRiskMonth(nextMonth);
+    setThermometerYear(year);
+    setThermometerMonth(nextMonth);
+  };
+
+  const handleRiskChartYearChange = (year: FilterPeriodValue) => {
+    if (year === "all") {
+      setRiskChartYear("all");
+      setRiskChartMonth("all");
+      return;
+    }
+
+    const months = monthsByYear[year] ?? [];
+    const nextMonth =
+      riskChartMonth === "all"
+        ? "all"
+        : months.includes(resolvedRiskChartPeriod.month)
+          ? resolvedRiskChartPeriod.month
+          : (months[months.length - 1] ?? currentMonth);
+
+    setRiskChartYear(year);
+    setRiskChartMonth(nextMonth);
   };
 
   const handleKpiMonthYearChange = (year: number) => {
@@ -381,11 +531,18 @@ export default function Home() {
     setRankingMonth(nextMonth);
   };
 
-  const handleRiskMonthChange = (month: FilterPeriodValue) => {
-    if (riskYear === "all" && month !== "all") {
-      setRiskYear(defaultPeriod.year);
+  const handleThermometerMonthChange = (month: FilterPeriodValue) => {
+    if (thermometerYear === "all" && month !== "all") {
+      setThermometerYear(defaultPeriod.year);
     }
-    setRiskMonth(month);
+    setThermometerMonth(month);
+  };
+
+  const handleRiskChartMonthChange = (month: FilterPeriodValue) => {
+    if (riskChartYear === "all" && month !== "all") {
+      setRiskChartYear(defaultPeriod.year);
+    }
+    setRiskChartMonth(month);
   };
 
   const handleKpiMonthChange = (month: number) => {
@@ -400,11 +557,55 @@ export default function Home() {
     setRankingMonth(month);
   };
 
+  const handleGlobalYearChange = (year: FilterPeriodValue) => {
+    if (year === "all") {
+      setGlobalYear("Todos");
+      setGlobalMonth("Todos");
+      return;
+    }
+
+    const months = monthsByYear[year] ?? [];
+    const nextMonth =
+      globalMonth === "Todos"
+        ? "Todos"
+        : months.includes(globalMonth)
+          ? globalMonth
+          : "Todos";
+
+    setGlobalYear(year);
+    setGlobalMonth(nextMonth);
+  };
+
+  const handleGlobalMonthChange = (month: FilterPeriodValue) => {
+    if (month === "all") {
+      setGlobalMonth("Todos");
+      return;
+    }
+
+    if (globalYear === "Todos") {
+      setGlobalYear(defaultPeriod.year);
+    }
+
+    setGlobalMonth(month);
+  };
+
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         <header className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h1 className="text-2xl font-bold text-slate-900">Monitoramento de Glosas</h1>
+          <div className="mt-4">
+            <FilterMonthYear
+              label="Filtro global"
+              year={globalYear === "Todos" ? "all" : globalYear}
+              month={globalMonth === "Todos" ? "all" : globalMonth}
+              years={dataYearOptions}
+              months={globalMonthOptions}
+              allowAll
+              onYearChange={handleGlobalYearChange}
+              onMonthChange={handleGlobalMonthChange}
+            />
+          </div>
           <p className="mt-2 text-sm text-slate-600">
             Atualizado em: {updated_at ? new Date(updated_at).toLocaleString("pt-BR") : "-"}
           </p>
@@ -492,43 +693,56 @@ export default function Home() {
           />
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-2">
+        <section className="grid gap-4">
+          <RiskGauge
+            score={generalRisk.score}
+            level={generalRisk.level}
+            summary={generalRisk.summary}
+            supportText={generalRisk.supportText}
+            actions={
+              <FilterMonthYear
+                year={thermometerYearSelection}
+                month={thermometerMonthSelection}
+                years={thermometerYearOptions}
+                months={safeThermometerMonthOptions}
+                allowAll
+                onYearChange={handleThermometerYearChange}
+                onMonthChange={handleThermometerMonthChange}
+              />
+            }
+          />
+
           <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Risco de Glosa</h2>
                 <p className="text-sm text-slate-500">
-                  Média do score por recurso no período.
+                  Média do score por recurso no recorte global.
                 </p>
               </div>
-
               <FilterMonthYear
-                year={riskYearSelection}
-                month={riskMonthSelection}
-                years={riskYearOptions}
-                months={safeRiskMonthOptions}
+                year={riskChartYearSelection}
+                month={riskChartMonthSelection}
+                years={riskChartYearOptions}
+                months={safeRiskChartMonthOptions}
                 allowAll
-                onYearChange={handleRiskYearChange}
-                onMonthChange={handleRiskMonthChange}
+                onYearChange={handleRiskChartYearChange}
+                onMonthChange={handleRiskChartMonthChange}
               />
             </header>
 
             <RiskBarChart data={riskData} />
           </article>
-
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <header className="mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">
-                Evolução - Valor Glosado
-              </h2>
-              <p className="text-sm text-slate-500">
-                Somatório mensal em todo o histórico.
-              </p>
-            </header>
-
-            <GlosaLineChart data={lineData} />
-          </article>
         </section>
+
+        <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <header className="mb-4">
+            <h2 className="text-lg font-semibold text-slate-900">Evolução - Valor Glosado</h2>
+            <p className="text-sm text-slate-500">Somatório mensal no recorte global.</p>
+          </header>
+
+          <GlosaLineChart data={lineData} />
+        </article>
 
         <CompareMonths
           years={availableYears}
@@ -546,7 +760,7 @@ export default function Home() {
           onMonthBChange={setCompareMonthB}
         />
 
-        <section className="grid gap-4 lg:grid-cols-2">
+        <section className="grid gap-4">
           <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -570,19 +784,6 @@ export default function Home() {
             </header>
 
             <MotivoRanking data={motivoRankingData} />
-          </article>
-
-          <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <header className="mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">
-                Níveis de Recursos de Risco de Glosa
-              </h2>
-              <p className="text-sm text-slate-500">
-                Mosaico proporcional aproximado ao valor glosado.
-              </p>
-            </header>
-
-            <ResourceRiskMosaic data={mosaicData} />
           </article>
         </section>
       </div>
