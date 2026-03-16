@@ -54,7 +54,12 @@ function clampScore(score: number): number {
 export function RiskGauge({ score, level, summary, supportText, actions }: RiskGaugeProps) {
   const safeScore = clampScore(score);
   const levelStyle = LEVEL_STYLES[level];
-  const gaugeRotation = `${Math.min(180, Math.max(0, (safeScore / 100) * 180))}deg`;
+  const gaugeRotationByLevel: Record<RiskGaugeLevel, string> = {
+    Baixo: "-45deg",
+    Medio: "0deg",
+    Alto: "45deg",
+  };
+  const gaugeRotation = gaugeRotationByLevel[level];
 
   return (
     <section
