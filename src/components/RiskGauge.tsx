@@ -132,7 +132,7 @@ export function RiskGauge({ score, level, summary, supportText, actions }: RiskG
         <div className="rounded-[28px] border border-slate-200/80 bg-white/88 p-5 shadow-sm backdrop-blur">
           <div className="mx-auto flex max-w-[320px] flex-col items-center">
             <div className="relative h-44 w-72 overflow-hidden">
-              <div className="absolute inset-x-0 bottom-0 h-72 rounded-full bg-[conic-gradient(from_180deg_at_50%_100%,#10b981_0deg_72deg,#fbbf24_72deg_126deg,#e11d48_126deg_180deg,#e2e8f0_180deg_360deg)]" />
+              <div className="absolute inset-x-0 bottom-0 h-72 rounded-full bg-[conic-gradient(from_180deg_at_50%_100%,#d1d5db_0deg_180deg,#e2e8f0_180deg_360deg)]" />
               <div className="absolute inset-x-5 bottom-5 h-56 rounded-full bg-white" />
               <div
                 className="absolute bottom-1 left-1/2 z-10 h-24 w-1.5 origin-bottom -translate-x-1/2 rounded-full bg-slate-900 shadow-[0_0_20px_rgba(15,23,42,0.18)]"
