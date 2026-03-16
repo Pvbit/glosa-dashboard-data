@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CompareMonths } from "@/components/CompareMonths";
 import { FilterMonthYear } from "@/components/FilterMonthYear";
 import { GlosaLineChart } from "@/components/GlosaLineChart";
@@ -110,6 +110,10 @@ type PeriodOption = {
 };
 
 type FilterPeriodValue = number | "all";
+type FilterSelection = {
+  year: FilterPeriodValue;
+  month: FilterPeriodValue;
+};
 
 function filterRowsByPeriod(
   rows: GlosaRow[],
@@ -124,6 +128,73 @@ function filterRowsByPeriod(
     if (month === "all") return true;
     return period.month === month;
   });
+}
+
+function getLatestMonth(months: number[]): number | null {
+  return months.length ? months[months.length - 1] : null;
+}
+
+function resolveFilterSelection(
+  year: FilterPeriodValue,
+  month: FilterPeriodValue,
+  defaultPeriod: { year: number; month: number },
+  monthsByYear: Record<number, number[]>,
+  availableMonths: number[],
+): FilterSelection {
+  if (year === "all") {
+    if (month === "all") {
+      return { year: "all", month: "all" };
+    }
+
+    return availableMonths.includes(month)
+      ? { year: "all", month }
+      : { year: "all", month: "all" };
+  }
+
+  const yearMonths = monthsByYear[year] ?? [];
+  if (!yearMonths.length) {
+    return defaultPeriod;
+  }
+
+  if (month === "all") {
+    return { year, month: "all" };
+  }
+
+  if (yearMonths.includes(month)) {
+    return { year, month };
+  }
+
+  return { year, month: getLatestMonth(yearMonths) ?? defaultPeriod.month };
+}
+
+function getMonthOptionsForSelection(
+  year: FilterPeriodValue,
+  monthsByYear: Record<number, number[]>,
+  availableMonths: number[],
+): number[] {
+  if (year === "all") {
+    return availableMonths;
+  }
+
+  return monthsByYear[year] ?? [];
+}
+
+function resolveNextMonthForYear(
+  year: FilterPeriodValue,
+  currentMonth: FilterPeriodValue,
+  monthsByYear: Record<number, number[]>,
+  availableMonths: number[],
+): FilterPeriodValue {
+  if (currentMonth === "all") {
+    return "all";
+  }
+
+  const validMonths = year === "all" ? availableMonths : (monthsByYear[year] ?? []);
+  if (validMonths.includes(currentMonth)) {
+    return currentMonth;
+  }
+
+  return getLatestMonth(validMonths) ?? "all";
 }
 
 export default function Home() {
@@ -199,6 +270,10 @@ export default function Home() {
     () => new Set(periodOptions.map((item) => item.key)),
     [periodOptions],
   );
+  const availableMonths = useMemo(
+    () => Array.from(new Set(periodOptions.map((item) => item.month))).sort((a, b) => a - b),
+    [periodOptions],
+  );
 
   const latestPeriod = periodOptions.length ? periodOptions[periodOptions.length - 1] : null;
   const currentPeriodKey = toYearMonthKey(currentYear, currentMonth);
@@ -221,23 +296,38 @@ export default function Home() {
       return { year, month };
     }
 
+    const months = monthsByYear[year] ?? [];
+    const latestMonthInYear = getLatestMonth(months);
+    if (latestMonthInYear !== null) {
+      return { year, month: latestMonthInYear };
+    }
+
     return defaultPeriod;
   };
 
-  const resolvedRiskPeriod = resolvePeriod(
-    typeof thermometerYear === "number" ? thermometerYear : defaultPeriod.year,
-    typeof thermometerMonth === "number" ? thermometerMonth : defaultPeriod.month,
+  const resolvedThermometerSelection = resolveFilterSelection(
+    thermometerYear,
+    thermometerMonth,
+    defaultPeriod,
+    monthsByYear,
+    availableMonths,
   );
-  const resolvedRiskChartPeriod = resolvePeriod(
-    typeof riskChartYear === "number" ? riskChartYear : defaultPeriod.year,
-    typeof riskChartMonth === "number" ? riskChartMonth : defaultPeriod.month,
+  const resolvedRiskChartSelection = resolveFilterSelection(
+    riskChartYear,
+    riskChartMonth,
+    defaultPeriod,
+    monthsByYear,
+    availableMonths,
   );
   const resolvedKpiYear =
     dataYears.length === 0 ? currentYear : (dataYears.includes(kpiYear) ? kpiYear : defaultYear);
   const resolvedKpiMonthPeriod = resolvePeriod(kpiMonthYear, kpiMonthMonth);
-  const resolvedRankingPeriod = resolvePeriod(
-    typeof rankingYear === "number" ? rankingYear : defaultPeriod.year,
-    typeof rankingMonth === "number" ? rankingMonth : defaultPeriod.month,
+  const resolvedRankingSelection = resolveFilterSelection(
+    rankingYear,
+    rankingMonth,
+    defaultPeriod,
+    monthsByYear,
+    availableMonths,
   );
 
   const globalMonthOptions = useMemo(() => {
@@ -269,21 +359,24 @@ export default function Home() {
     });
   }, [globalMonth, globalYear, rows]);
 
-  const thermometerYearSelection =
-    thermometerYear === "all" ? "all" : resolvedRiskPeriod.year;
-  const thermometerMonthSelection =
-    thermometerMonth === "all" ? "all" : resolvedRiskPeriod.month;
-  const riskChartYearSelection =
-    riskChartYear === "all" ? "all" : resolvedRiskChartPeriod.year;
-  const riskChartMonthSelection =
-    riskChartMonth === "all" ? "all" : resolvedRiskChartPeriod.month;
-  const rankingYearSelection = rankingYear === "all" ? "all" : resolvedRankingPeriod.year;
-  const rankingMonthSelection = rankingMonth === "all" ? "all" : resolvedRankingPeriod.month;
+  const thermometerYearSelection = resolvedThermometerSelection.year;
+  const thermometerMonthSelection = resolvedThermometerSelection.month;
+  const riskChartYearSelection = resolvedRiskChartSelection.year;
+  const riskChartMonthSelection = resolvedRiskChartSelection.month;
+  const rankingYearSelection = resolvedRankingSelection.year;
+  const rankingMonthSelection = resolvedRankingSelection.month;
 
-  const riskChartMonthOptions =
-    typeof riskChartYearSelection === "number" ? monthsByYear[riskChartYearSelection] ?? [] : [];
+  const riskChartMonthOptions = getMonthOptionsForSelection(
+    riskChartYearSelection,
+    monthsByYear,
+    availableMonths,
+  );
   const kpiMonthOptions = monthsByYear[resolvedKpiMonthPeriod.year] ?? [];
-  const rankingMonthOptions = monthsByYear[resolvedRankingPeriod.year] ?? [];
+  const rankingMonthOptions = getMonthOptionsForSelection(
+    rankingYearSelection,
+    monthsByYear,
+    availableMonths,
+  );
 
   const availableYears = useMemo(() => {
     return Array.from(
@@ -449,57 +542,109 @@ export default function Home() {
 
   const safeRiskChartMonthOptions = riskChartMonthOptions.length
     ? riskChartMonthOptions
-    : [resolvedRiskChartPeriod.month];
-  const thermometerMonthOptions =
-    typeof thermometerYearSelection === "number"
-      ? monthsByYear[thermometerYearSelection] ?? []
-      : Array.from(new Set(periodOptions.map((item) => item.month))).sort((a, b) => a - b);
+    : [defaultPeriod.month];
+  const thermometerMonthOptions = getMonthOptionsForSelection(
+    thermometerYearSelection,
+    monthsByYear,
+    availableMonths,
+  );
   const safeThermometerMonthOptions = thermometerMonthOptions.length
     ? thermometerMonthOptions
-    : [resolvedRiskPeriod.month];
+    : [defaultPeriod.month];
   const safeKpiMonthOptions = kpiMonthOptions.length
     ? kpiMonthOptions
     : [resolvedKpiMonthPeriod.month];
   const safeRankingMonthOptions = rankingMonthOptions.length
     ? rankingMonthOptions
-    : [resolvedRankingPeriod.month];
+    : [defaultPeriod.month];
 
-  const handleThermometerYearChange = (year: FilterPeriodValue) => {
-    if (year === "all") {
-      setThermometerYear("all");
-      setThermometerMonth("all");
+  useEffect(() => {
+    if (!periodOptions.length) {
       return;
     }
 
-    const months = monthsByYear[year] ?? [];
-    const nextMonth =
-      thermometerMonth === "all"
-        ? "all"
-        : months.includes(resolvedRiskPeriod.month)
-          ? resolvedRiskPeriod.month
-          : (months[months.length - 1] ?? currentMonth);
+    const nextThermometer = resolveFilterSelection(
+      thermometerYear,
+      thermometerMonth,
+      defaultPeriod,
+      monthsByYear,
+      availableMonths,
+    );
+    if (nextThermometer.year !== thermometerYear) {
+      setThermometerYear(nextThermometer.year);
+    }
+    if (nextThermometer.month !== thermometerMonth) {
+      setThermometerMonth(nextThermometer.month);
+    }
 
+    const nextRiskChart = resolveFilterSelection(
+      riskChartYear,
+      riskChartMonth,
+      defaultPeriod,
+      monthsByYear,
+      availableMonths,
+    );
+    if (nextRiskChart.year !== riskChartYear) {
+      setRiskChartYear(nextRiskChart.year);
+    }
+    if (nextRiskChart.month !== riskChartMonth) {
+      setRiskChartMonth(nextRiskChart.month);
+    }
+
+    const nextRanking = resolveFilterSelection(
+      rankingYear,
+      rankingMonth,
+      defaultPeriod,
+      monthsByYear,
+      availableMonths,
+    );
+    if (nextRanking.year !== rankingYear) {
+      setRankingYear(nextRanking.year);
+    }
+    if (nextRanking.month !== rankingMonth) {
+      setRankingMonth(nextRanking.month);
+    }
+
+    if (globalYear !== "Todos" && !(monthsByYear[globalYear] ?? []).length) {
+      setGlobalYear(defaultPeriod.year);
+    }
+
+    if (globalMonth !== "Todos") {
+      const validMonths =
+        globalYear === "Todos" ? availableMonths : (monthsByYear[globalYear] ?? []);
+
+      if (!validMonths.includes(globalMonth)) {
+        setGlobalMonth("Todos");
+      }
+    }
+  }, [
+    availableMonths,
+    defaultPeriod.month,
+    defaultPeriod.year,
+    globalMonth,
+    globalYear,
+    monthsByYear,
+    periodOptions.length,
+    rankingMonth,
+    rankingYear,
+    riskChartMonth,
+    riskChartYear,
+    thermometerMonth,
+    thermometerYear,
+  ]);
+
+  const handleThermometerYearChange = (year: FilterPeriodValue) => {
     setThermometerYear(year);
-    setThermometerMonth(nextMonth);
+    setThermometerMonth(
+      resolveNextMonthForYear(year, thermometerMonth, monthsByYear, availableMonths),
+    );
   };
 
   const handleRiskChartYearChange = (year: FilterPeriodValue) => {
-    if (year === "all") {
-      setRiskChartYear("all");
-      setRiskChartMonth("all");
-      return;
-    }
-
-    const months = monthsByYear[year] ?? [];
-    const nextMonth =
-      riskChartMonth === "all"
-        ? "all"
-        : months.includes(resolvedRiskChartPeriod.month)
-          ? resolvedRiskChartPeriod.month
-          : (months[months.length - 1] ?? currentMonth);
-
     setRiskChartYear(year);
-    setRiskChartMonth(nextMonth);
+    setRiskChartMonth(
+      resolveNextMonthForYear(year, riskChartMonth, monthsByYear, availableMonths),
+    );
   };
 
   const handleKpiMonthYearChange = (year: number) => {
@@ -513,35 +658,17 @@ export default function Home() {
   };
 
   const handleRankingYearChange = (year: FilterPeriodValue) => {
-    if (year === "all") {
-      setRankingYear("all");
-      setRankingMonth("all");
-      return;
-    }
-
-    const months = monthsByYear[year] ?? [];
-    const nextMonth =
-      rankingMonth === "all"
-        ? "all"
-        : months.includes(resolvedRankingPeriod.month)
-          ? resolvedRankingPeriod.month
-          : (months[months.length - 1] ?? currentMonth);
-
     setRankingYear(year);
-    setRankingMonth(nextMonth);
+    setRankingMonth(
+      resolveNextMonthForYear(year, rankingMonth, monthsByYear, availableMonths),
+    );
   };
 
   const handleThermometerMonthChange = (month: FilterPeriodValue) => {
-    if (thermometerYear === "all" && month !== "all") {
-      setThermometerYear(defaultPeriod.year);
-    }
     setThermometerMonth(month);
   };
 
   const handleRiskChartMonthChange = (month: FilterPeriodValue) => {
-    if (riskChartYear === "all" && month !== "all") {
-      setRiskChartYear(defaultPeriod.year);
-    }
     setRiskChartMonth(month);
   };
 
@@ -551,39 +678,30 @@ export default function Home() {
   };
 
   const handleRankingMonthChange = (month: FilterPeriodValue) => {
-    if (rankingYear === "all" && month !== "all") {
-      setRankingYear(defaultPeriod.year);
-    }
     setRankingMonth(month);
   };
 
   const handleGlobalYearChange = (year: FilterPeriodValue) => {
     if (year === "all") {
       setGlobalYear("Todos");
-      setGlobalMonth("Todos");
       return;
     }
 
-    const months = monthsByYear[year] ?? [];
-    const nextMonth =
-      globalMonth === "Todos"
-        ? "Todos"
-        : months.includes(globalMonth)
-          ? globalMonth
-          : "Todos";
-
     setGlobalYear(year);
-    setGlobalMonth(nextMonth);
+    setGlobalMonth((current) => {
+      if (current === "Todos") {
+        return "Todos";
+      }
+
+      const months = monthsByYear[year] ?? [];
+      return months.includes(current) ? current : "Todos";
+    });
   };
 
   const handleGlobalMonthChange = (month: FilterPeriodValue) => {
     if (month === "all") {
       setGlobalMonth("Todos");
       return;
-    }
-
-    if (globalYear === "Todos") {
-      setGlobalYear(defaultPeriod.year);
     }
 
     setGlobalMonth(month);
